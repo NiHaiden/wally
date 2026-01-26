@@ -3,8 +3,12 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Mutex;
-use tauri::State;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, State};
+use tokio::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WallpaperSettings {
@@ -69,6 +73,7 @@ pub struct CurrentWallpaper {
 pub struct AppState {
     pub settings: Mutex<WallpaperSettings>,
     pub current_wallpaper: Mutex<CurrentWallpaper>,
+    pub daemon_running: Arc<AtomicBool>,
 }
 
 fn get_config_dir() -> PathBuf {
@@ -369,13 +374,29 @@ fn set_wallpaper_macos_sqlite(file_path: &str) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn set_wallpaper_linux(file_path: &str) -> Result<(), String> {
+    eprintln!("[wally] Setting wallpaper for Linux");
+    eprintln!("[wally] File path: {}", file_path);
+
+    // Log environment for debugging
+    eprintln!("[wally] XDG_CURRENT_DESKTOP: {:?}", std::env::var("XDG_CURRENT_DESKTOP"));
+    eprintln!("[wally] KDE_FULL_SESSION: {:?}", std::env::var("KDE_FULL_SESSION"));
+    eprintln!("[wally] XDG_SESSION_TYPE: {:?}", std::env::var("XDG_SESSION_TYPE"));
+
+    // Check if file exists
+    if !std::path::Path::new(file_path).exists() {
+        return Err(format!("Wallpaper file does not exist: {}", file_path));
+    }
+    eprintln!("[wally] File exists: true");
+
     // Try KDE Plasma first
     if is_kde() {
+        eprintln!("[wally] Detected KDE Plasma");
         return set_wallpaper_kde(file_path);
     }
 
     // Try GNOME
     if is_gnome() {
+        eprintln!("[wally] Detected GNOME");
         return set_wallpaper_gnome(file_path);
     }
 
@@ -400,33 +421,88 @@ fn is_gnome() -> bool {
 
 #[cfg(target_os = "linux")]
 fn set_wallpaper_kde(file_path: &str) -> Result<(), String> {
+    // Plasma 6 script for setting wallpaper
     let script = format!(
         r#"
-        desktops().forEach(d => {{
-            d.currentConfigGroup = ['Wallpaper','org.kde.image','General'];
-            d.writeConfig('Image','file://{}');
-            d.reloadConfig();
-        }})
+        const allDesktops = desktops();
+        for (const desktop of allDesktops) {{
+            desktop.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
+            desktop.writeConfig('Image', 'file://{}');
+        }}
         "#,
         file_path
     );
 
-    let output = Command::new("qdbus")
-        .args([
-            "org.kde.plasmashell",
-            "/PlasmaShell",
-            "org.kde.PlasmaShell.evaluateScript",
-            &script,
-        ])
-        .output()
-        .map_err(|e| e.to_string())?;
+    eprintln!("[wally] KDE script:\n{}", script);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to set KDE wallpaper: {}", stderr));
+    // Try qdbus6 first (Plasma 6 / Qt6), then fall back to qdbus
+    let qdbus_commands = ["qdbus6", "qdbus"];
+    #[allow(unused_assignments)]
+    let mut last_error = String::from("No qdbus command succeeded");
+
+    for qdbus_cmd in qdbus_commands {
+        eprintln!("[wally] Trying {} command...", qdbus_cmd);
+
+        let output = Command::new(qdbus_cmd)
+            .args([
+                "org.kde.plasmashell",
+                "/PlasmaShell",
+                "org.kde.PlasmaShell.evaluateScript",
+                &script,
+            ])
+            .output();
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("[wally] {} exit status: {}", qdbus_cmd, output.status);
+                eprintln!("[wally] {} stdout: {}", qdbus_cmd, stdout);
+                eprintln!("[wally] {} stderr: {}", qdbus_cmd, stderr);
+
+                if output.status.success() {
+                    eprintln!("[wally] Successfully set wallpaper via {}", qdbus_cmd);
+                    return Ok(());
+                }
+
+                // Check if the error is about the script itself vs command not found
+                last_error = format!("{} failed: {}", qdbus_cmd, stderr);
+            }
+            Err(e) => {
+                eprintln!("[wally] {} not found or failed to execute: {}", qdbus_cmd, e);
+                last_error = format!("{} error: {}", qdbus_cmd, e);
+                // Continue to try the next command
+            }
+        }
     }
 
-    Ok(())
+    // If qdbus methods fail, try plasma-apply-wallpaperimage (Plasma 6)
+    eprintln!("[wally] Trying plasma-apply-wallpaperimage...");
+    let output = Command::new("plasma-apply-wallpaperimage")
+        .arg(file_path)
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("[wally] plasma-apply-wallpaperimage exit status: {}", output.status);
+            eprintln!("[wally] plasma-apply-wallpaperimage stdout: {}", stdout);
+            eprintln!("[wally] plasma-apply-wallpaperimage stderr: {}", stderr);
+
+            if output.status.success() {
+                eprintln!("[wally] Successfully set wallpaper via plasma-apply-wallpaperimage");
+                return Ok(());
+            }
+            last_error = format!("plasma-apply-wallpaperimage failed: {}", stderr);
+        }
+        Err(e) => {
+            eprintln!("[wally] plasma-apply-wallpaperimage not found: {}", e);
+            last_error = format!("plasma-apply-wallpaperimage error: {}", e);
+        }
+    }
+
+    Err(format!("Failed to set KDE wallpaper. Last error: {}", last_error))
 }
 
 #[cfg(target_os = "linux")]
@@ -569,15 +645,173 @@ fn is_gnome() -> bool {
     false
 }
 
+/// Convert interval settings to Duration
+fn get_interval_duration(value: u32, unit: &str) -> Duration {
+    match unit {
+        "minutes" => Duration::from_secs(value as u64 * 60),
+        "hours" => Duration::from_secs(value as u64 * 3600),
+        "days" => Duration::from_secs(value as u64 * 86400),
+        "weeks" => Duration::from_secs(value as u64 * 604800),
+        _ => Duration::from_secs(3600), // Default to 1 hour
+    }
+}
+
+/// Fetch and set a new wallpaper (used by daemon)
+async fn change_wallpaper_internal(settings: &WallpaperSettings) -> Result<(), String> {
+    if settings.api_key.is_empty() {
+        return Err("API key not configured".to_string());
+    }
+
+    eprintln!("[wally daemon] Fetching new wallpaper...");
+
+    // Fetch random image from Unsplash
+    let mut url = "https://api.unsplash.com/photos/random?orientation=landscape".to_string();
+    if !settings.collection_id.is_empty() {
+        url.push_str(&format!("&collections={}", settings.collection_id));
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Client-ID {}", settings.api_key))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch image: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("API error: {} - {}", status, body));
+    }
+
+    let image: UnsplashImage = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    eprintln!("[wally daemon] Got image: {}", image.id);
+
+    // Download the image
+    let wallpaper_dir = get_wallpaper_dir();
+    let filename = format!("wallpaper_{}.jpg", image.id);
+    let file_path = wallpaper_dir.join(&filename);
+
+    let response = client
+        .get(&image.urls.full)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download image: {}", e))?;
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+    let mut file = fs::File::create(&file_path).map_err(|e| format!("Failed to create file: {}", e))?;
+    file.write_all(&bytes).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    let file_path_str = file_path.to_string_lossy().to_string();
+    eprintln!("[wally daemon] Downloaded to: {}", file_path_str);
+
+    // Set the wallpaper
+    set_wallpaper_platform(&file_path_str)?;
+    eprintln!("[wally daemon] Wallpaper set successfully");
+
+    // Trigger download tracking (per Unsplash guidelines)
+    let _ = client
+        .get(&image.links.download_location)
+        .header("Authorization", format!("Client-ID {}", settings.api_key))
+        .send()
+        .await;
+
+    // Save current wallpaper info
+    let current = CurrentWallpaper {
+        image: Some(image),
+        local_path: Some(file_path_str),
+        set_at: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    let config_path = get_config_dir().join("current_wallpaper.json");
+    if let Ok(content) = serde_json::to_string_pretty(&current) {
+        let _ = fs::write(&config_path, content);
+    }
+
+    // Clean up old wallpapers
+    let _ = cleanup_old_wallpapers(&wallpaper_dir);
+
+    Ok(())
+}
+
+/// Daemon loop that periodically changes wallpaper
+async fn wallpaper_daemon(daemon_running: Arc<AtomicBool>) {
+    eprintln!("[wally daemon] Starting wallpaper daemon");
+
+    while daemon_running.load(Ordering::SeqCst) {
+        // Load fresh settings each iteration
+        let settings = load_settings();
+
+        if !settings.auto_change {
+            eprintln!("[wally daemon] Auto-change disabled, stopping daemon");
+            break;
+        }
+
+        let interval_duration = get_interval_duration(settings.interval_value, &settings.interval_unit);
+        eprintln!(
+            "[wally daemon] Next wallpaper change in {} seconds",
+            interval_duration.as_secs()
+        );
+
+        // Sleep for the interval (check periodically if we should stop)
+        let check_interval = Duration::from_secs(10);
+        let mut elapsed = Duration::ZERO;
+
+        while elapsed < interval_duration && daemon_running.load(Ordering::SeqCst) {
+            tokio::time::sleep(check_interval).await;
+            elapsed += check_interval;
+        }
+
+        // Check if we should stop
+        if !daemon_running.load(Ordering::SeqCst) {
+            eprintln!("[wally daemon] Daemon stop requested");
+            break;
+        }
+
+        // Change the wallpaper
+        match change_wallpaper_internal(&settings).await {
+            Ok(()) => eprintln!("[wally daemon] Wallpaper changed successfully"),
+            Err(e) => eprintln!("[wally daemon] Failed to change wallpaper: {}", e),
+        }
+    }
+
+    eprintln!("[wally daemon] Wallpaper daemon stopped");
+}
+
 #[tauri::command]
-fn start_auto_change() -> Result<(), String> {
-    // Auto-change is handled by the frontend timer for now
-    // A more robust solution would use a system service
+fn start_auto_change(state: State<AppState>) -> Result<(), String> {
+    let daemon_running = state.daemon_running.clone();
+
+    // Check if already running
+    if daemon_running.load(Ordering::SeqCst) {
+        eprintln!("[wally] Daemon already running");
+        return Ok(());
+    }
+
+    // Mark as running
+    daemon_running.store(true, Ordering::SeqCst);
+    eprintln!("[wally] Starting auto-change daemon");
+
+    // Spawn the daemon task
+    let daemon_flag = daemon_running.clone();
+    tauri::async_runtime::spawn(async move {
+        wallpaper_daemon(daemon_flag).await;
+    });
+
     Ok(())
 }
 
 #[tauri::command]
-fn stop_auto_change() -> Result<(), String> {
+fn stop_auto_change(state: State<AppState>) -> Result<(), String> {
+    eprintln!("[wally] Stopping auto-change daemon");
+    state.daemon_running.store(false, Ordering::SeqCst);
     Ok(())
 }
 
@@ -586,10 +820,17 @@ async fn open_url(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_daemon_status(state: State<AppState>) -> bool {
+    state.daemon_running.load(Ordering::SeqCst)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let settings = load_settings();
     let current_wallpaper = load_current_wallpaper();
+    let auto_change_enabled = settings.auto_change;
+    let daemon_running = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -597,6 +838,7 @@ pub fn run() {
         .manage(AppState {
             settings: Mutex::new(settings),
             current_wallpaper: Mutex::new(current_wallpaper),
+            daemon_running: daemon_running.clone(),
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -610,8 +852,87 @@ pub fn run() {
             get_platform,
             start_auto_change,
             stop_auto_change,
+            get_daemon_status,
             open_url,
         ])
+        .setup(move |app| {
+            // Auto-start daemon if enabled in settings
+            if auto_change_enabled {
+                eprintln!("[wally] Auto-change enabled, starting daemon on startup");
+                let daemon_flag = daemon_running.clone();
+                daemon_flag.store(true, Ordering::SeqCst);
+                tauri::async_runtime::spawn(async move {
+                    wallpaper_daemon(daemon_flag).await;
+                });
+            }
+
+            // Create tray menu
+            let show_item = MenuItem::with_id(app, "show", "Show Wally", true, None::<&str>)?;
+            let change_item = MenuItem::with_id(app, "change", "Change Wallpaper", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+            let menu = Menu::with_items(app, &[&show_item, &change_item, &quit_item])?;
+
+            // Build the tray icon
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .tooltip("Wally - Wallpaper Manager")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "change" => {
+                        // Trigger wallpaper change via the daemon logic
+                        let app_handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let settings = load_settings();
+                            match change_wallpaper_internal(&settings).await {
+                                Ok(()) => eprintln!("[wally tray] Wallpaper changed"),
+                                Err(e) => eprintln!("[wally tray] Failed to change wallpaper: {}", e),
+                            }
+                            // Emit event to update UI
+                            let _ = app_handle.emit("wallpaper-changed", ());
+                        });
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Minimize to tray on close
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

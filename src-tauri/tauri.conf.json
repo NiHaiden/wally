@@ -21,12 +21,19 @@
         "hiddenTitle": true,
         "decorations": true,
         "transparent": false,
+        "closable": true,
+        "visible": true,
         "trafficLightPosition": {
           "x": 12,
           "y": 20
         }
       }
     ],
+    "trayIcon": {
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": true,
+      "id": "main-tray"
+    },
     "security": {
       "csp": null
     }

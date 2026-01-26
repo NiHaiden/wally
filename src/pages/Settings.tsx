@@ -52,7 +52,7 @@ const COLLECTION_PRESETS = [
 
 export function SettingsPage() {
   const navigate = useNavigate();
-  const [settings, setSettings] = useState<WallpaperSettings | null>(null);
+  const [, setSettings] = useState<WallpaperSettings | null>(null);
   const [platform, setPlatform] = useState<string>("");
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);

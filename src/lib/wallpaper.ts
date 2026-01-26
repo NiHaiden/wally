@@ -82,6 +82,10 @@ export async function stopAutoChange(): Promise<void> {
   return invoke("stop_auto_change");
 }
 
+export async function getDaemonStatus(): Promise<boolean> {
+  return invoke("get_daemon_status");
+}
+
 export async function openUrl(url: string): Promise<void> {
   return invoke("open_url", { url });
 }

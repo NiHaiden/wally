@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import {
   RefreshCw,
   Download,
@@ -11,6 +12,7 @@ import {
   Loader2,
   ImageIcon,
   Clock,
+  Circle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -23,6 +25,7 @@ import {
   saveCurrentWallpaper,
   triggerDownload,
   getSettings,
+  getDaemonStatus,
   openUrl,
   type UnsplashImage,
   type WallpaperSettings,
@@ -41,25 +44,37 @@ export function HomePage() {
   const [isSettingWallpaper, setIsSettingWallpaper] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [settings, setSettings] = useState<WallpaperSettings | null>(null);
+  const [daemonRunning, setDaemonRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const displayImage = previewImage || currentImage;
 
   useEffect(() => {
     loadInitialData();
+
+    // Listen for wallpaper changes from tray
+    const unlisten = listen("wallpaper-changed", () => {
+      loadInitialData();
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   async function loadInitialData() {
     try {
-      const [wallpaper, settingsData] = await Promise.all([
+      const [wallpaper, settingsData, daemonStatus] = await Promise.all([
         getCurrentWallpaper(),
         getSettings(),
+        getDaemonStatus(),
       ]);
       if (wallpaper.image) {
         setCurrentImage(wallpaper.image);
         setLocalPath(wallpaper.local_path);
       }
       setSettings(settingsData);
+      setDaemonRunning(daemonStatus);
     } catch (err) {
       console.error("Failed to load initial data:", err);
     }
@@ -281,14 +296,27 @@ export function HomePage() {
           <Card className="p-4 !py-4 !gap-0">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div
-                  className={`h-2 w-2 rounded-full ${
-                    settings.auto_change ? "bg-green-500" : "bg-muted-foreground"
-                  }`}
-                />
+                <div className="relative">
+                  <Circle
+                    className={`h-3 w-3 ${
+                      daemonRunning
+                        ? "fill-green-500 text-green-500"
+                        : settings.auto_change
+                        ? "fill-yellow-500 text-yellow-500"
+                        : "fill-muted-foreground text-muted-foreground"
+                    }`}
+                  />
+                  {daemonRunning && (
+                    <span className="absolute inset-0 h-3 w-3 animate-ping rounded-full bg-green-500 opacity-75" />
+                  )}
+                </div>
                 <div>
                   <p className="text-sm font-medium">
-                    {settings.auto_change ? "Auto-change enabled" : "Auto-change disabled"}
+                    {daemonRunning
+                      ? "Daemon running"
+                      : settings.auto_change
+                      ? "Daemon starting..."
+                      : "Auto-change disabled"}
                   </p>
                   {settings.auto_change && (
                     <p className="flex items-center gap-1 text-xs text-muted-foreground">
