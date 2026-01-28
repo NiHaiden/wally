@@ -10,6 +10,11 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Emitter, Manager, State};
 use tokio::time::Duration;
 
+#[cfg(target_os = "windows")]
+use std::ffi::OsStr;
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WallpaperSettings {
     pub api_key: String,
@@ -74,6 +79,7 @@ pub struct AppState {
     pub settings: Mutex<WallpaperSettings>,
     pub current_wallpaper: Mutex<CurrentWallpaper>,
     pub daemon_running: Arc<AtomicBool>,
+    pub space_watcher_running: Arc<AtomicBool>,
 }
 
 fn get_config_dir() -> PathBuf {
@@ -228,7 +234,7 @@ fn set_wallpaper_platform(file_path: &str) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        Err("Windows support not yet implemented".to_string())
+        set_wallpaper_windows(file_path)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -239,63 +245,38 @@ fn set_wallpaper_platform(file_path: &str) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn set_wallpaper_macos(file_path: &str) -> Result<(), String> {
-    // Try multiple methods to ensure wallpaper is set everywhere
+    eprintln!("[wally] Setting macOS wallpaper: {}", file_path);
 
-    // Method 1: Use System Events to set wallpaper on all desktops
+    // Use NSWorkspace via AppleScript - this is the most reliable method
     let script = format!(
         r#"
         use framework "AppKit"
         use scripting additions
 
-        set theFile to POSIX file "{}"
+        set imageURL to current application's NSURL's fileURLWithPath:"{}"
+        set sharedWorkspace to current application's NSWorkspace's sharedWorkspace()
+        set allScreens to current application's NSScreen's screens()
 
-        -- Get all screens
-        set theScreens to current application's NSScreen's screens()
-        set screenCount to theScreens's |count|()
-
-        -- Set wallpaper for each screen
-        repeat with i from 0 to (screenCount - 1)
-            set theScreen to theScreens's objectAtIndex:i
+        repeat with aScreen in allScreens
             set theOptions to current application's NSDictionary's dictionary()
-            current application's NSWorkspace's sharedWorkspace()'s setDesktopImageURL:(current application's NSURL's fileURLWithPath:"{}") forScreen:theScreen options:theOptions |error|:(missing value)
+            sharedWorkspace's setDesktopImageURL:imageURL forScreen:aScreen options:theOptions |error|:(missing value)
         end repeat
-
-        -- Also use System Events for all desktops (spaces)
-        tell application "System Events"
-            tell every desktop
-                set picture to "{}"
-            end tell
-        end tell
         "#,
-        file_path, file_path, file_path
+        file_path
     );
 
     let output = Command::new("osascript")
         .arg("-e")
         .arg(&script)
         .output()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("AppleScript failed: {}", e))?;
 
-    // If the AppleScript method fails, try the sqlite method as fallback
     if !output.status.success() {
-        return set_wallpaper_macos_sqlite(file_path);
-    }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("[wally] AppleScript error: {}", stderr);
 
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn set_wallpaper_macos_sqlite(file_path: &str) -> Result<(), String> {
-    // Fallback: Directly update the desktop picture database
-    // This works on macOS Ventura and later
-
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let db_path = home
-        .join("Library/Application Support/Dock/desktoppicture.db");
-
-    if !db_path.exists() {
-        // If db doesn't exist, fall back to simple AppleScript
-        let script = format!(
+        // Fallback to System Events
+        let fallback_script = format!(
             r#"
             tell application "System Events"
                 tell every desktop
@@ -306,69 +287,109 @@ fn set_wallpaper_macos_sqlite(file_path: &str) -> Result<(), String> {
             file_path
         );
 
-        let output = Command::new("osascript")
+        let fallback_output = Command::new("osascript")
             .arg("-e")
-            .arg(&script)
+            .arg(&fallback_script)
             .output()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("Fallback AppleScript failed: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to set wallpaper: {}", stderr));
+        if !fallback_output.status.success() {
+            return Err(format!("All methods failed: {}", String::from_utf8_lossy(&fallback_output.stderr)));
         }
-        return Ok(());
     }
 
-    // Update the database
-    let db_path_str = db_path.to_string_lossy();
+    Ok(())
+}
 
-    // Delete existing entries and insert new one
-    let sql_commands = format!(
-        r#"
-        DELETE FROM data;
-        DELETE FROM displays;
-        DELETE FROM pictures;
-        DELETE FROM preferences;
-        DELETE FROM prefs;
-        DELETE FROM spaces;
-        INSERT INTO data VALUES('{}');
-        "#,
-        file_path
-    );
+/// Get the current desktop picture path on macOS
+#[cfg(target_os = "macos")]
+fn get_current_desktop_picture() -> Option<String> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"tell application "System Events" to get picture of current desktop"#)
+        .output()
+        .ok()?;
 
-    let output = Command::new("sqlite3")
-        .arg(&*db_path_str)
-        .arg(&sql_commands)
-        .output();
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+    None
+}
 
-    // Restart Dock to apply changes
-    let _ = Command::new("killall")
-        .arg("Dock")
-        .output();
+/// Space watcher daemon - monitors current space wallpaper and re-applies if different
+#[cfg(target_os = "macos")]
+async fn space_watcher_daemon(running: Arc<AtomicBool>) {
+    eprintln!("[wally space-watcher] Starting space watcher");
 
-    match output {
-        Ok(o) if o.status.success() => Ok(()),
-        _ => {
-            // Final fallback: simple AppleScript
-            let script = format!(
-                r#"
-                tell application "System Events"
-                    tell every desktop
-                        set picture to "{}"
-                    end tell
-                end tell
-                "#,
-                file_path
-            );
+    while running.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-            Command::new("osascript")
-                .arg("-e")
-                .arg(&script)
-                .output()
-                .map_err(|e| e.to_string())?;
+        // Load our desired wallpaper
+        let desired = load_current_wallpaper();
+        if let Some(desired_path) = desired.local_path {
+            if !std::path::Path::new(&desired_path).exists() {
+                continue;
+            }
 
+            // Get current desktop picture for this space
+            if let Some(current_picture) = get_current_desktop_picture() {
+                // If current space has different wallpaper, apply ours
+                if current_picture != desired_path {
+                    eprintln!(
+                        "[wally space-watcher] Wallpaper mismatch detected. Current: {}, Desired: {}",
+                        current_picture, desired_path
+                    );
+                    if let Err(e) = set_wallpaper_macos(&desired_path) {
+                        eprintln!("[wally space-watcher] Failed to set wallpaper: {}", e);
+                    } else {
+                        eprintln!("[wally space-watcher] Wallpaper re-applied successfully");
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!("[wally space-watcher] Space watcher stopped");
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn space_watcher_daemon(_running: Arc<AtomicBool>) {
+    // No-op on non-macOS platforms
+}
+
+#[cfg(target_os = "windows")]
+fn set_wallpaper_windows(file_path: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SPI_SETDESKWALLPAPER,
+    };
+
+    eprintln!("[wally] Setting Windows wallpaper: {}", file_path);
+
+    // Convert path to wide string (UTF-16) for Windows API
+    let wide_path: Vec<u16> = OsStr::new(file_path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let result = unsafe {
+        SystemParametersInfoW(
+            SPI_SETDESKWALLPAPER,
+            0,
+            Some(wide_path.as_ptr() as *mut _),
+            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+        )
+    };
+
+    match result {
+        Ok(()) => {
+            eprintln!("[wally] Windows wallpaper set successfully");
             Ok(())
         }
+        Err(e) => Err(format!("Failed to set Windows wallpaper: {}", e)),
     }
 }
 
@@ -636,11 +657,13 @@ fn get_platform() -> String {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 fn is_kde() -> bool {
     false
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 fn is_gnome() -> bool {
     false
 }
@@ -831,6 +854,7 @@ pub fn run() {
     let current_wallpaper = load_current_wallpaper();
     let auto_change_enabled = settings.auto_change;
     let daemon_running = Arc::new(AtomicBool::new(false));
+    let space_watcher_running = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -839,6 +863,7 @@ pub fn run() {
             settings: Mutex::new(settings),
             current_wallpaper: Mutex::new(current_wallpaper),
             daemon_running: daemon_running.clone(),
+            space_watcher_running: space_watcher_running.clone(),
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -856,6 +881,19 @@ pub fn run() {
             open_url,
         ])
         .setup(move |app| {
+            // Start space watcher on macOS to re-apply wallpaper when switching spaces
+            #[cfg(target_os = "macos")]
+            {
+                let space_watcher_flag = space_watcher_running.clone();
+                space_watcher_flag.store(true, Ordering::SeqCst);
+                eprintln!("[wally] Starting space watcher for macOS");
+                tauri::async_runtime::spawn(async move {
+                    space_watcher_daemon(space_watcher_flag).await;
+                });
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = space_watcher_running; // Suppress unused variable warning
+
             // Auto-start daemon if enabled in settings
             if auto_change_enabled {
                 eprintln!("[wally] Auto-change enabled, starting daemon on startup");
