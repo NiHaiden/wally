@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { TitleBar } from "@/components/TitleBar";
+import { Logo } from "@/components/Logo";
 import {
   RefreshCw,
   Download,
@@ -80,12 +81,6 @@ export function HomePage() {
     }
   }
 
-  const handleDragStart = useCallback(async (e: React.MouseEvent) => {
-    if (e.button === 0) {
-      await getCurrentWindow().startDragging();
-    }
-  }, []);
-
   const handleFetchNew = useCallback(async () => {
     if (!settings?.api_key) {
       setError("Please configure your Unsplash API key in settings");
@@ -153,20 +148,19 @@ export function HomePage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Draggable title bar area */}
-      <div
-        onMouseDown={handleDragStart}
-        className="fixed inset-x-0 top-0 z-50 h-12 bg-background/80 backdrop-blur-xl border-b border-border/50 cursor-default"
-      />
+      <TitleBar />
 
       <div className="mx-auto max-w-4xl space-y-6 p-6 pt-16">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Wally</h1>
-            <p className="text-sm text-muted-foreground">
-              Beautiful wallpapers from Unsplash
-            </p>
+          <div className="flex items-center gap-3">
+            <Logo size={48} />
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Wally</h1>
+              <p className="text-sm text-muted-foreground">
+                Beautiful wallpapers from Unsplash
+              </p>
+            </div>
           </div>
           <Button
             variant="ghost"

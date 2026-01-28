@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ArrowLeft, Save, Loader2, ExternalLink, Check } from "lucide-react";
+import { TitleBar } from "@/components/TitleBar";
+import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -157,12 +158,6 @@ export function SettingsPage() {
     }
   };
 
-  const handleDragStart = useCallback(async (e: React.MouseEvent) => {
-    if (e.button === 0) {
-      await getCurrentWindow().startDragging();
-    }
-  }, []);
-
   const handleOpenUnsplashDeveloper = async () => {
     await openUrl("https://unsplash.com/developers");
   };
@@ -197,11 +192,7 @@ export function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Draggable title bar area */}
-      <div
-        onMouseDown={handleDragStart}
-        className="fixed inset-x-0 top-0 z-50 h-12 bg-background/80 backdrop-blur-xl border-b border-border/50 cursor-default"
-      />
+      <TitleBar />
 
       <div className="mx-auto max-w-2xl space-y-6 p-6 pt-16">
         {/* Header */}
@@ -401,7 +392,13 @@ export function SettingsPage() {
         {/* About */}
         <Card>
           <CardHeader>
-            <CardTitle>About</CardTitle>
+            <div className="flex items-center gap-4">
+              <Logo size={56} />
+              <div>
+                <CardTitle>Wally</CardTitle>
+                <CardDescription>Version 0.1.0</CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>

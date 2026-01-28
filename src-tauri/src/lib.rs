@@ -362,34 +362,40 @@ async fn space_watcher_daemon(_running: Arc<AtomicBool>) {
 
 #[cfg(target_os = "windows")]
 fn set_wallpaper_windows(file_path: &str) -> Result<(), String> {
-    use windows::core::PCWSTR;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SystemParametersInfoW, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SPI_SETDESKWALLPAPER,
-    };
+    use std::path::Path;
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{DesktopWallpaper, IDesktopWallpaper, DWPOS_FILL};
 
     eprintln!("[wally] Setting Windows wallpaper: {}", file_path);
 
-    // Convert path to wide string (UTF-16) for Windows API
-    let wide_path: Vec<u16> = OsStr::new(file_path)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    // Verify file exists
+    if !Path::new(file_path).exists() {
+        return Err(format!("Wallpaper file does not exist: {}", file_path));
+    }
+    eprintln!("[wally] File exists, proceeding with IDesktopWallpaper");
 
-    let result = unsafe {
-        SystemParametersInfoW(
-            SPI_SETDESKWALLPAPER,
-            0,
-            Some(wide_path.as_ptr() as *mut _),
-            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
-        )
-    };
+    unsafe {
+        // Initialize COM
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
-    match result {
-        Ok(()) => {
-            eprintln!("[wally] Windows wallpaper set successfully");
-            Ok(())
-        }
-        Err(e) => Err(format!("Failed to set Windows wallpaper: {}", e)),
+        // Create IDesktopWallpaper instance
+        let wallpaper: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)
+            .map_err(|e| format!("Failed to create IDesktopWallpaper: {}", e))?;
+
+        // Convert path to HSTRING
+        let path = HSTRING::from(file_path);
+
+        // Set wallpaper position to Fill
+        wallpaper.SetPosition(DWPOS_FILL)
+            .map_err(|e| format!("Failed to set wallpaper position: {}", e))?;
+
+        // Set the wallpaper (pass None for monitor ID to set on all monitors)
+        wallpaper.SetWallpaper(PCWSTR::null(), &path)
+            .map_err(|e| format!("Failed to set wallpaper: {}", e))?;
+
+        eprintln!("[wally] Windows wallpaper set successfully via IDesktopWallpaper");
+        Ok(())
     }
 }
 
@@ -859,6 +865,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_os::init())
         .manage(AppState {
             settings: Mutex::new(settings),
             current_wallpaper: Mutex::new(current_wallpaper),

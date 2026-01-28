@@ -1,0 +1,33 @@
+<svg viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+    <linearGradient id="photo1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ec4899"/>
+      <stop offset="100%" style="stop-color:#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="photo2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- Back polaroid -->
+  <g transform="translate(512, 512) rotate(-12) translate(-512, -512)">
+    <rect x="262" y="180" width="500" height="600" rx="32" fill="#fafafa"/>
+    <rect x="302" y="220" width="420" height="420" rx="16" fill="url(#photo2)"/>
+  </g>
+
+  <!-- Front polaroid -->
+  <g transform="translate(512, 512) rotate(8) translate(-512, -512)">
+    <rect x="262" y="220" width="500" height="600" rx="32" fill="#ffffff"/>
+    <rect x="302" y="260" width="420" height="420" rx="16" fill="url(#photo1)"/>
+    <!-- W on the photo -->
+    <path d="M382 420 L422 540 L462 470 L502 540 L542 420" stroke="white" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+</svg>
