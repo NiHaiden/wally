@@ -355,11 +355,6 @@ async fn space_watcher_daemon(running: Arc<AtomicBool>) {
     eprintln!("[wally space-watcher] Space watcher stopped");
 }
 
-#[cfg(not(target_os = "macos"))]
-async fn space_watcher_daemon(_running: Arc<AtomicBool>) {
-    // No-op on non-macOS platforms
-}
-
 #[cfg(target_os = "windows")]
 fn set_wallpaper_windows(file_path: &str) -> Result<(), String> {
     use std::path::Path;
@@ -447,6 +442,7 @@ fn is_gnome() -> bool {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(unused_assignments)]
 fn set_wallpaper_kde(file_path: &str) -> Result<(), String> {
     // Plasma 6 script for setting wallpaper
     let script = format!(
@@ -464,7 +460,6 @@ fn set_wallpaper_kde(file_path: &str) -> Result<(), String> {
 
     // Try qdbus6 first (Plasma 6 / Qt6), then fall back to qdbus
     let qdbus_commands = ["qdbus6", "qdbus"];
-    #[allow(unused_assignments)]
     let mut last_error = String::from("No qdbus command succeeded");
 
     for qdbus_cmd in qdbus_commands {
