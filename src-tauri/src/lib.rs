@@ -294,7 +294,10 @@ fn set_wallpaper_macos(file_path: &str) -> Result<(), String> {
             .map_err(|e| format!("Fallback AppleScript failed: {}", e))?;
 
         if !fallback_output.status.success() {
-            return Err(format!("All methods failed: {}", String::from_utf8_lossy(&fallback_output.stderr)));
+            return Err(format!(
+                "All methods failed: {}",
+                String::from_utf8_lossy(&fallback_output.stderr)
+            ));
         }
     }
 
@@ -359,7 +362,9 @@ async fn space_watcher_daemon(running: Arc<AtomicBool>) {
 fn set_wallpaper_windows(file_path: &str) -> Result<(), String> {
     use std::path::Path;
     use windows::core::{HSTRING, PCWSTR};
-    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
     use windows::Win32::UI::Shell::{DesktopWallpaper, IDesktopWallpaper, DWPOS_FILL};
 
     eprintln!("[wally] Setting Windows wallpaper: {}", file_path);
@@ -382,11 +387,13 @@ fn set_wallpaper_windows(file_path: &str) -> Result<(), String> {
         let path = HSTRING::from(file_path);
 
         // Set wallpaper position to Fill
-        wallpaper.SetPosition(DWPOS_FILL)
+        wallpaper
+            .SetPosition(DWPOS_FILL)
             .map_err(|e| format!("Failed to set wallpaper position: {}", e))?;
 
         // Set the wallpaper (pass None for monitor ID to set on all monitors)
-        wallpaper.SetWallpaper(PCWSTR::null(), &path)
+        wallpaper
+            .SetWallpaper(PCWSTR::null(), &path)
             .map_err(|e| format!("Failed to set wallpaper: {}", e))?;
 
         eprintln!("[wally] Windows wallpaper set successfully via IDesktopWallpaper");
@@ -400,9 +407,18 @@ fn set_wallpaper_linux(file_path: &str) -> Result<(), String> {
     eprintln!("[wally] File path: {}", file_path);
 
     // Log environment for debugging
-    eprintln!("[wally] XDG_CURRENT_DESKTOP: {:?}", std::env::var("XDG_CURRENT_DESKTOP"));
-    eprintln!("[wally] KDE_FULL_SESSION: {:?}", std::env::var("KDE_FULL_SESSION"));
-    eprintln!("[wally] XDG_SESSION_TYPE: {:?}", std::env::var("XDG_SESSION_TYPE"));
+    eprintln!(
+        "[wally] XDG_CURRENT_DESKTOP: {:?}",
+        std::env::var("XDG_CURRENT_DESKTOP")
+    );
+    eprintln!(
+        "[wally] KDE_FULL_SESSION: {:?}",
+        std::env::var("KDE_FULL_SESSION")
+    );
+    eprintln!(
+        "[wally] XDG_SESSION_TYPE: {:?}",
+        std::env::var("XDG_SESSION_TYPE")
+    );
 
     // Check if file exists
     if !std::path::Path::new(file_path).exists() {
@@ -422,7 +438,10 @@ fn set_wallpaper_linux(file_path: &str) -> Result<(), String> {
         return set_wallpaper_gnome(file_path);
     }
 
-    Err("Unsupported Linux desktop environment. Currently supports KDE Plasma and GNOME.".to_string())
+    Err(
+        "Unsupported Linux desktop environment. Currently supports KDE Plasma and GNOME."
+            .to_string(),
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -491,7 +510,10 @@ fn set_wallpaper_kde(file_path: &str) -> Result<(), String> {
                 last_error = format!("{} failed: {}", qdbus_cmd, stderr);
             }
             Err(e) => {
-                eprintln!("[wally] {} not found or failed to execute: {}", qdbus_cmd, e);
+                eprintln!(
+                    "[wally] {} not found or failed to execute: {}",
+                    qdbus_cmd, e
+                );
                 last_error = format!("{} error: {}", qdbus_cmd, e);
                 // Continue to try the next command
             }
@@ -508,7 +530,10 @@ fn set_wallpaper_kde(file_path: &str) -> Result<(), String> {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("[wally] plasma-apply-wallpaperimage exit status: {}", output.status);
+            eprintln!(
+                "[wally] plasma-apply-wallpaperimage exit status: {}",
+                output.status
+            );
             eprintln!("[wally] plasma-apply-wallpaperimage stdout: {}", stdout);
             eprintln!("[wally] plasma-apply-wallpaperimage stderr: {}", stderr);
 
@@ -524,7 +549,10 @@ fn set_wallpaper_kde(file_path: &str) -> Result<(), String> {
         }
     }
 
-    Err(format!("Failed to set KDE wallpaper. Last error: {}", last_error))
+    Err(format!(
+        "Failed to set KDE wallpaper. Last error: {}",
+        last_error
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -610,7 +638,10 @@ async fn download_image(image_url: String, filename: String) -> Result<String, S
 }
 
 #[tauri::command]
-async fn trigger_download(download_location: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn trigger_download(
+    download_location: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
 
     if settings.api_key.is_empty() {
@@ -731,8 +762,10 @@ async fn change_wallpaper_internal(settings: &WallpaperSettings) -> Result<(), S
         .await
         .map_err(|e| format!("Failed to read image bytes: {}", e))?;
 
-    let mut file = fs::File::create(&file_path).map_err(|e| format!("Failed to create file: {}", e))?;
-    file.write_all(&bytes).map_err(|e| format!("Failed to write file: {}", e))?;
+    let mut file =
+        fs::File::create(&file_path).map_err(|e| format!("Failed to create file: {}", e))?;
+    file.write_all(&bytes)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
 
     let file_path_str = file_path.to_string_lossy().to_string();
     eprintln!("[wally daemon] Downloaded to: {}", file_path_str);
@@ -778,7 +811,8 @@ async fn wallpaper_daemon(daemon_running: Arc<AtomicBool>) {
             break;
         }
 
-        let interval_duration = get_interval_duration(settings.interval_value, &settings.interval_unit);
+        let interval_duration =
+            get_interval_duration(settings.interval_value, &settings.interval_unit);
         eprintln!(
             "[wally daemon] Next wallpaper change in {} seconds",
             interval_duration.as_secs()
@@ -908,7 +942,8 @@ pub fn run() {
 
             // Create tray menu
             let show_item = MenuItem::with_id(app, "show", "Show Wally", true, None::<&str>)?;
-            let change_item = MenuItem::with_id(app, "change", "Change Wallpaper", true, None::<&str>)?;
+            let change_item =
+                MenuItem::with_id(app, "change", "Change Wallpaper", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
             let menu = Menu::with_items(app, &[&show_item, &change_item, &quit_item])?;
@@ -933,7 +968,9 @@ pub fn run() {
                             let settings = load_settings();
                             match change_wallpaper_internal(&settings).await {
                                 Ok(()) => eprintln!("[wally tray] Wallpaper changed"),
-                                Err(e) => eprintln!("[wally tray] Failed to change wallpaper: {}", e),
+                                Err(e) => {
+                                    eprintln!("[wally tray] Failed to change wallpaper: {}", e)
+                                }
                             }
                             // Emit event to update UI
                             let _ = app_handle.emit("wallpaper-changed", ());
