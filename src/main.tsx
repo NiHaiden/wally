@@ -8,8 +8,12 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 import "./index.css";
+import { initTheme } from "./hooks/useTheme";
 import { HomePage } from "./pages/Home";
 import { SettingsPage } from "./pages/Settings";
+
+// Apply theme before first paint to prevent flash
+initTheme();
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,

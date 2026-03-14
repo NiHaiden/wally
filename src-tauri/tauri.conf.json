@@ -13,14 +13,14 @@
     "windows": [
       {
         "title": "Wally",
-        "width": 900,
-        "height": 700,
-        "minWidth": 600,
-        "minHeight": 500,
+        "width": 780,
+        "height": 620,
+        "minWidth": 520,
+        "minHeight": 450,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "decorations": true,
-        "transparent": false,
+        "transparent": true,
         "closable": true,
         "visible": true,
         "trafficLightPosition": {
@@ -29,11 +29,7 @@
         }
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/32x32.png",
-      "iconAsTemplate": true,
-      "id": "main-tray"
-    },
+    "macOSPrivateApi": true,
     "security": {
       "csp": null
     }

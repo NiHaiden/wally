@@ -11,7 +11,7 @@ export function TitleBar() {
   return (
     <div
       onMouseDown={handleDragStart}
-      className="fixed inset-x-0 top-0 z-50 h-12 bg-background/80 backdrop-blur-xl border-b border-border/50 cursor-default"
+      className="fixed inset-x-0 top-0 z-50 h-12 cursor-default"
     />
   );
 }

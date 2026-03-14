@@ -18,6 +18,12 @@ pub struct WallpaperSettings {
     pub interval_value: u32,
     pub interval_unit: String,
     pub auto_change: bool,
+    #[serde(default = "default_blur_opacity")]
+    pub blur_opacity: u32,
+}
+
+fn default_blur_opacity() -> u32 {
+    90
 }
 
 impl Default for WallpaperSettings {
@@ -28,6 +34,7 @@ impl Default for WallpaperSettings {
             interval_value: 3,
             interval_unit: "hours".to_string(),
             auto_change: false,
+            blur_opacity: 90,
         }
     }
 }
@@ -925,6 +932,18 @@ pub fn run() {
             }
             #[cfg(not(target_os = "macos"))]
             let _ = space_watcher_running; // Suppress unused variable warning
+
+            // Apply native vibrancy effect
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::window::{Effect, EffectsBuilder};
+                if let Some(window) = app.get_webview_window("main") {
+                    let effects = EffectsBuilder::new()
+                        .effects([Effect::WindowBackground])
+                        .build();
+                    let _ = window.set_effects(effects);
+                }
+            }
 
             // Auto-start daemon if enabled in settings
             if auto_change_enabled {

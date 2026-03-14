@@ -8,6 +8,7 @@ export interface WallpaperSettings {
   interval_value: number;
   interval_unit: IntervalUnit;
   auto_change: boolean;
+  blur_opacity: number;
 }
 
 export interface UnsplashImage {
@@ -88,4 +89,18 @@ export async function getDaemonStatus(): Promise<boolean> {
 
 export async function openUrl(url: string): Promise<void> {
   return invoke("open_url", { url });
+}
+
+/** Apply glass opacity to CSS custom properties. Value is 0–100. */
+export function applyGlassOpacity(value: number) {
+  const base = value / 100;
+  const root = document.documentElement;
+  const isDark = root.classList.contains("dark");
+  const opacity = isDark ? Math.max(0, base - 0.1) : base;
+  root.dataset.glassBase = String(base);
+  if (isDark) {
+    root.style.setProperty("--glass-bg", `rgba(9, 9, 11, ${opacity})`);
+  } else {
+    root.style.setProperty("--glass-bg", `rgba(246, 246, 246, ${opacity})`);
+  }
 }
