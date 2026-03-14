@@ -33,7 +33,6 @@ export function HomePage() {
   const navigate = useNavigate();
   const [currentImage, setCurrentImage] = useState<UnsplashImage | null>(null);
   const [previewImage, setPreviewImage] = useState<UnsplashImage | null>(null);
-  const [localPath, setLocalPath] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSettingWallpaper, setIsSettingWallpaper] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -60,7 +59,6 @@ export function HomePage() {
       ]);
       if (wallpaper.image) {
         setCurrentImage(wallpaper.image);
-        setLocalPath(wallpaper.local_path);
         extractAndApplyColors(wallpaper.image.urls.thumb);
       }
       setSettings(settingsData);
@@ -99,7 +97,6 @@ export function HomePage() {
       await triggerDownload(displayImage.links.download_location);
       setCurrentImage(displayImage);
       setPreviewImage(null);
-      setLocalPath(path);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to set wallpaper");
     } finally {
